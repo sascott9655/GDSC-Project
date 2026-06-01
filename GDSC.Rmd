@@ -1,0 +1,7 @@
+---
+title: "Genomics of Drug Sensitivity in Cancer (GDSC) Project"
+author: "Sam Scott, Megan Lee, Titus Sun"
+date: "2026-06-01"
+output: html_document
+---
+
