@@ -4,4 +4,8 @@ author: "Sam Scott, Megan Lee, Titus Sun"
 date: "2026-06-01"
 output: html_document
 ---
-
+# a way to read the dataset off of github so no need for local machine calls
+```{r}
+data_url <- "https://raw.githubusercontent.com/sascott9655/GDSC-Project/refs/heads/main/GDSC_DATASET.csv"
+data  <- read.csv(data_url)
+```
