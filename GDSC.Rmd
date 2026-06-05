@@ -4,8 +4,212 @@ author: "Sam Scott, Megan Lee, Titus Sun"
 date: "2026-06-01"
 output: html_document
 ---
+
+```{r warning=FALSE, message=FALSE}
+library(caret)
+library(tidyverse)
+library(kernlab)
+library(dplyr)
+library(tibble)
+library(mlbench)
+library(randomForest)
+```
+
 # a way to read the dataset off of github so no need for local machine calls
 ```{r}
 data_url <- "https://raw.githubusercontent.com/sascott9655/GDSC-Project/refs/heads/main/GDSC_DATASET.csv"
 data  <- read.csv(data_url)
 ```
+
+```{r}
+str(data)
+head(data)
+dim(data)
+```
+
+```{r}
+# cleaning the data
+
+# verifying the COSMIC_ID numbers are unique to each CELL_LINE_NAME
+
+data %>%
+  group_by(COSMIC_ID) %>%
+  summarise(n_unique = n_distinct(CELL_LINE_NAME)) %>%
+  filter(n_unique > 1)
+
+# verifying the DRUG_ID numbers are unique to each DRUG_NAME
+
+data %>%
+  group_by(DRUG_ID) %>%
+  summarise(n_unique = n_distinct(DRUG_NAME)) %>%
+  filter(n_unique > 1)
+
+# assessing the redundancy of the TCGA columns
+
+tcga_match <- data$TCGA_DESC == data$Cancer.Type..matching.TCGA.label.
+table(tcga_match, useNA = "ifany")
+
+#tcga_miss <- data[data$TCGA_DESC != data$Cancer.Type..matching.TCGA.label., ]
+#dim(tcga_miss)
+#sum(tcga_miss$Cancer.Type..matching.TCGA.label. == "", na.rm = TRUE)
+#sum(
+  #!tcga_match &
+  #!is.na(data$TCGA_DESC) &
+  #!is.na(data$Cancer.Type..matching.TCGA.label.) &
+  #data$TCGA_DESC != "" &
+  #data$Cancer.Type..matching.TCGA.label. != ""
+#)
+
+sum(data$Cancer.Type..matching.TCGA.label. == "")
+sum(data$TCGA_DESC == "")
+sum(data$Cancer.Type..matching.TCGA.label. == "" &
+      data$TCGA_DESC == "")
+
+#tcga_miss2 <- data[
+    #!tcga_match &
+    #!is.na(data$TCGA_DESC) &
+    #!is.na(data$Cancer.Type..matching.TCGA.label.) &
+    #data$TCGA_DESC != "" &
+    #data$Cancer.Type..matching.TCGA.label. != "",
+  #]
+#head(tcga_miss2, 20)
+
+# removing irrelevant and redundant columns
+
+data2 <- data %>%
+  select(-COSMIC_ID, -DRUG_ID, -Screen.Medium, -Growth.Properties, -CNA, -Gene.Expression, -Methylation)
+str(data2)
+
+# looking for na and blank values
+
+data2 %>%
+  summarise(across(everything(), ~sum(is.na(.))))%>%
+  t()
+
+blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
+as_tibble(list(
+  column = names(blank),
+  empty_count = as.vector(blank)
+))
+
+# reference Cancer.Type..matching.TCGA.label. to enter values for TCGA_DESC
+
+unique(data2$Cancer.Type..matching.TCGA.label.)
+data2 <- data2 %>%
+  mutate(
+    TCGA_DESC = case_when(
+      TCGA_DESC == "" & Cancer.Type..matching.TCGA.label. == "" ~ "UNCLASSIFIED1",
+      TCGA_DESC == "" ~ Cancer.Type..matching.TCGA.label.,
+      TRUE ~ TCGA_DESC
+    )
+  )
+
+blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
+as_tibble(list(
+  column = names(blank),
+  empty_count = as.vector(blank)
+))
+
+# reference TCGA_DESC to enter GDSC.Tissue.descriptor.1 values for blank values in GDSC.Tissue.descriptor.2
+
+length(unique(data2$GDSC.Tissue.descriptor.1))
+length(unique(data2$GDSC.Tissue.descriptor.2))
+length(unique(data2$TCGA_DESC))
+
+gdsc_miss <- data2 %>%
+  filter(GDSC.Tissue.descriptor.1 != "", !is.na(GDSC.Tissue.descriptor.1)) %>%
+  group_by(TCGA_DESC, GDSC.Tissue.descriptor.1) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(TCGA_DESC) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(TCGA_DESC, GDSC.Tissue.descriptor.1)
+
+gdsc_miss <- gdsc_miss %>%
+  rename(gdsc_map = GDSC.Tissue.descriptor.1)
+
+data2 <- data2 %>%
+  left_join(gdsc_miss, by = "TCGA_DESC") %>%
+  mutate(
+    GDSC.Tissue.descriptor.2 = case_when(
+      GDSC.Tissue.descriptor.2 != "" ~ GDSC.Tissue.descriptor.2,
+      GDSC.Tissue.descriptor.1 != "" ~ GDSC.Tissue.descriptor.1,
+      !is.na(gdsc_map) ~ gdsc_map,
+      TRUE ~ "UNCLASSIFIED1"
+    )
+  )
+
+blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
+as_tibble(list(
+  column = names(blank),
+  empty_count = as.vector(blank)
+))
+
+# imputing blank MSI values
+
+unique(data2$Microsatellite.instability.Status..MSI.)
+
+tcga_msi <- data2 %>%
+  group_by(TCGA_DESC) %>%
+  summarise(
+    n_groups = n_distinct(Microsatellite.instability.Status..MSI.),
+    groups = paste(unique(Microsatellite.instability.Status..MSI.), collapse = ", "),
+    .groups = "drop"
+  )
+tcga_msi
+
+table(data2$Microsatellite.instability.Status..MSI.)
+
+msi_miss <- data2 %>%
+  filter(Microsatellite.instability.Status..MSI. != "", !is.na(Microsatellite.instability.Status..MSI.)) %>%
+  group_by(TCGA_DESC, Microsatellite.instability.Status..MSI.) %>%
+  summarise(n = n(), .groups = "drop") %>%
+  group_by(TCGA_DESC) %>%
+  slice_max(n, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(TCGA_DESC, Microsatellite.instability.Status..MSI.)
+
+msi_miss <- msi_miss %>%
+  rename(msi_map = Microsatellite.instability.Status..MSI.)
+
+data2 <- data2 %>%
+  left_join(msi_miss, by = "TCGA_DESC") %>%
+  mutate(
+    Microsatellite.instability.Status..MSI. = coalesce(
+      na_if(Microsatellite.instability.Status..MSI., ""),
+      msi_map,
+      "UNCLASSIFIED1"
+    )
+  )
+
+blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
+as_tibble(list(
+  column = names(blank),
+  empty_count = as.vector(blank)
+))
+
+# imputing blank TARGET values
+
+sum(data2$TARGET == "" & data2$TARGET_PATHWAY != "Unclassified")
+target_miss <- data2 %>%
+  filter(TARGET == "", TARGET_PATHWAY != "Unclassified")
+unique(target_miss$TARGET_PATHWAY)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
