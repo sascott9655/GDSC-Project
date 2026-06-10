@@ -22,6 +22,9 @@ library(ggplot2)
 library(patchwork)
 library(Hmisc)
 library(e1071)
+library(doParallel)
+library(kknn)
+library(earth)
 ```
 
 # a way to read the dataset off of github so no need for local machine calls
@@ -33,7 +36,7 @@ data  <- read.csv(data_url)
 ```{r}
 str(data)
 head(data)
-dim(data)
+dim(data) #242,035 entries, 19 total columns
 ```
 
 ```{r}
@@ -55,16 +58,15 @@ data %>%
 
 # assessing the redundancy of the TCGA columns
 
-tcga_match <- data$TCGA_DESC == data$Cancer.Type..matching.TCGA.label.
+tcga_match <- data$TCGA_DESC == data$Cancer.Type..matching.TCGA.label. #see if TCGA_DESC has values that are the same as Cancer Type
 table(tcga_match, useNA = "ifany")
 
-sum(data$Cancer.Type..matching.TCGA.label. == "")
-sum(data$TCGA_DESC == "")
-sum(data$Cancer.Type..matching.TCGA.label. == "" &
+sum(data$Cancer.Type..matching.TCGA.label. == "") # see all Cancer Types that are empty strings (51446)
+sum(data$TCGA_DESC == "") # see all TCGA_DESC that are empty strings (1067)
+sum(data$Cancer.Type..matching.TCGA.label. == "" & # see all where both columns are empty (707)
       data$TCGA_DESC == "")
 
 # removing irrelevant and redundant columns
-
 data2 <- data %>%
   select(-COSMIC_ID, -DRUG_ID, -Screen.Medium, -Growth.Properties, -CNA, -Gene.Expression, -Methylation)
 str(data2)
@@ -77,6 +79,8 @@ data2 %>%
   summarise(across(everything(), ~sum(is.na(.))))%>%
   t()
 
+#show what values have empty values in a tibble called blank
+
 blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
 as_tibble(list(
   column = names(blank),
@@ -87,8 +91,12 @@ as_tibble(list(
 ```{r}
 # reference Cancer.Type..matching.TCGA.label. to enter values for TCGA_DESC
 
-unique(data2$Cancer.Type..matching.TCGA.label.)
-data2 <- data2 %>%
+unique(data2$Cancer.Type..matching.TCGA.label.) #Cancer Types unique values
+
+#Essentially if empty values occur in both Cancer Type and TCGA_DESC, label it as
+#UNCLASSIFIED1. Otherwise use the TCGA_DESC value.
+
+data2 <- data2 %>% 
   mutate(
     TCGA_DESC = case_when(
       TCGA_DESC == "" & Cancer.Type..matching.TCGA.label. == "" ~ "UNCLASSIFIED1",
@@ -96,6 +104,8 @@ data2 <- data2 %>%
       TRUE ~ TCGA_DESC
     )
   )
+
+#Now there are no empty string values for our TCGA_DESC
 
 blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
 as_tibble(list(
@@ -112,6 +122,12 @@ length(unique(data2$GDSC.Tissue.descriptor.1))
 length(unique(data2$GDSC.Tissue.descriptor.2))
 length(unique(data2$TCGA_DESC))
 
+
+#Find non-empty or non-missing GDSC descriptor 1 values
+#Count the number of pairs of occurrences
+#Keep most common descriptor values
+#Return those common mapped descriptor values
+
 gdsc_miss <- data2 %>%
   filter(GDSC.Tissue.descriptor.1 != "", !is.na(GDSC.Tissue.descriptor.1)) %>%
   group_by(TCGA_DESC, GDSC.Tissue.descriptor.1) %>%
@@ -121,8 +137,16 @@ gdsc_miss <- data2 %>%
   ungroup() %>%
   select(TCGA_DESC, GDSC.Tissue.descriptor.1)
 
+#rename gdsc.Tissue.descriptor to gdsc_map
+
 gdsc_miss <- gdsc_miss %>%
   rename(gdsc_map = GDSC.Tissue.descriptor.1)
+
+#Add gdsc_miss to our dataframe data2
+#Use GDSC Tissue descriptor 2 if not empty
+#Otherwise use GDSC Tissue descriptor 1 
+#Otherwise use gdsc_map (the most common descriptor per TCGA_DESC)
+#Otherwise "UNCLASSIFIED1"
 
 data2 <- data2 %>%
   left_join(gdsc_miss, by = "TCGA_DESC") %>%
@@ -134,6 +158,8 @@ data2 <- data2 %>%
       TRUE ~ "UNCLASSIFIED1"
     )
   )
+
+#No empty or missing values for GDSC Tissue Descriptor 2
 
 blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
 as_tibble(list(
@@ -159,6 +185,11 @@ tcga_msi
 
 table(data2$Microsatellite.instability.Status..MSI.)
 
+#Find non-empty or non-missing msi values
+#Count the number of pairs of occurrences
+#Keep most common MSI values
+#Return those common mapped MSI values
+
 msi_miss <- data2 %>%
   filter(Microsatellite.instability.Status..MSI. != "", !is.na(Microsatellite.instability.Status..MSI.)) %>%
   group_by(TCGA_DESC, Microsatellite.instability.Status..MSI.) %>%
@@ -168,8 +199,16 @@ msi_miss <- data2 %>%
   ungroup() %>%
   select(TCGA_DESC, Microsatellite.instability.Status..MSI.)
 
+#rename Microsatellite.instability.Status..MSI. to msi_map
+
 msi_miss <- msi_miss %>%
   rename(msi_map = Microsatellite.instability.Status..MSI.)
+
+#Add msi_miss to our dataframe data2
+#Make empty string NA values for the coalesce function to work
+#Prioritize using the MSI values if present 
+#Secondly use msi_map (the most common descriptor per TCGA_DESC, the imputation part of the process)
+#Otherwise "UNCLASSIFIED1"
 
 data2 <- data2 %>%
   left_join(msi_miss, by = "TCGA_DESC") %>%
@@ -180,6 +219,8 @@ data2 <- data2 %>%
       "UNCLASSIFIED1"
     )
   )
+
+#No more missing or empty MSI values
 
 blank <- sapply(data2, function(x) sum(x == "", na.rm = TRUE))
 as_tibble(list(
@@ -233,6 +274,8 @@ unique(data2$TARGET)
 ```{r}
 # data_c is the cleaned version of the GDSC data frame.
 
+# making sure our data_c has no empty or missing values in predictors
+
 str(data2)
 data_c <- data2 %>%
   select(-GDSC.Tissue.descriptor.1, -Cancer.Type..matching.TCGA.label., -gdsc_map, -msi_map, -target_map)
@@ -252,10 +295,10 @@ sum(data_c$TARGET == " ")
 
 ```{r}
 # correlation matrix with numeric data
-
-data_num <- data_c[, sapply(data_c, is.numeric)]
+data_num <- data_c[, sapply(data_c, is.numeric)] #3 out of the 10 predictors are numeric 
 data_corr <- cor(data_num)
-corr_mat <- cor(data_num, use = "complete.obs")
+?cor
+corr_mat <- cor(data_num, use = "complete.obs") #make sure that no NAs values are present when doing correlations
 corr_mat
 corrplot(data_corr)
 ```
@@ -357,7 +400,7 @@ hist.data.frame(data_num)
 skewness(data_c$AUC)
 
 auc_log <- data_c$AUC
-auc_log <- pmin(pmax(auc_log, 0.001), 0.999)
+auc_log <- pmin(pmax(auc_log, 0.001), 0.999) #log values 0 and 1 are undefined so we need to set a minimum and maximum
 auc_trans <- log(auc_log / (1 - auc_log))
 skewness(auc_trans)
 ```
@@ -370,7 +413,7 @@ data_numpred_trans <- data.frame(
   Z_SCORE = data_c$Z_SCORE
 )
 
-par(mfrow = c(2, 1))
+par(mfrow = c(2, 1)) #draws 2 plots side by side 2 rows by 1 column
 hist.data.frame(data_numpred_trans)
 
 data_numpred_cs <- scale(data_numpred_trans)
@@ -382,17 +425,19 @@ data_numpred_cs <- scale(data_numpred_trans)
 data_num_pca <- prcomp(data_numpred_cs)
 data_num_pca
 
+#how variance each PC contributes
 exp_var <- (data_num_pca$sdev^2) / sum(data_num_pca$sdev^2)
 exp_var
 
+#cumulatively adds how much each PC contributes till the value 1 is reached
 data_ex_vratio <- cumsum(exp_var)
-data_ex_vratio
+data_ex_vratio 
 
-par(pty = "s")
+par(pty = "s") #generate a square plot region s for square
 plot(
   exp_var,
-  type = "b",
-  pch = 19,
+  type = "b", #draw both lines and points
+  pch = 19, #use solid circles for the points
   xlab = "Principal Component",
   ylab = "Explained Variance Ratio",
   main = "Scree Plot"
@@ -404,7 +449,7 @@ sort(abs(data_num_pca$rotation[,1]), decreasing = TRUE)
 biplot(data_num_pca)
 
 PC1 <- data_num_pca$x[,1]
-cor.test(PC1, data_c$LN_IC50)
+cor.test(PC1, data_c$LN_IC50) #show PC 1 confidence interval roughly between 0.746 and 0.750
 
 plot(
   PC1,
@@ -419,9 +464,355 @@ abline(lm(data_c$LN_IC50 ~ PC1), col = "red")
 
 ```{r}
 # the final cleaned, reduced, and transformed data set is data_f.
-
 data_f <- data_c %>% select(-AUC)
 str(data_f)
 ```
 
+#SAM
 
+#Since the models took an extremely long time to train due to the caret package
+#naturally encoding all your categorical variables to be dummy variables, it was computationally expensive.
+#Instead predictors like CELL_LINE_NAME and DRUG_NAME are removed from the model to decrease computation time
+#and they did not provide predictive power
+
+
+```{r} 
+data_f <- data_f %>% select(-CELL_LINE_NAME, -DRUG_NAME)
+```
+
+#Seed is set. Data observations amount are reduced for faster training.
+
+```{r}
+seed <- 756
+set.seed(seed)
+
+#Target variable
+IC50 <- data_f$LN_IC50
+
+#Predictors
+data_f <- as.data.frame(data_f)
+
+row_reduction <- 0.10
+
+#Get 10 percent of the data amount randomly
+rrow_count <- sample(nrow(data_f), size=floor(row_reduction*nrow(data_f)))
+
+#Reduced the the amount of observations for modeling
+data_f <- data_f[rrow_count, ]
+IC50 <- IC50[rrow_count]
+```
+
+#Encode -- One hot encode all the predictor values manually (not through caret model)
+#that will be used for our model predictions
+
+```{r}
+#Encoding TARGET variables
+target_encode <- model.matrix(~ TARGET - 1, data = data_f)
+
+#Encoding the TARGET_PATHWAY variables
+pathway_encode <- model.matrix(~ TARGET_PATHWAY - 1, data = data_f)
+
+#Encoding TCGA_DESC
+tissue_encode <- dummyVars(~ TCGA_DESC, data = data_f)
+tissue_encode <- predict(tissue_encode, data_f)
+
+#Encoding GDSC Tissue Descriptor 2
+gdsctd2_encode <- dummyVars(~ GDSC.Tissue.descriptor.2, data = data_f)
+gdsctd2_encode <- predict(gdsctd2_encode, data_f)
+
+#Since only 3 types in predictor we can make it discrete numeric 
+data_f$MSI <- as.numeric(as.factor(data_f$Microsatellite.instability.Status..MSI.))
+```
+
+#Combine all encoded variables 
+
+```{r}
+predictors <- cbind(
+  target_encode,
+  pathway_encode,
+  tissue_encode,
+  gdsctd2_encode,
+  MSI = data_f$MSI,
+  Z_SCORE = data_f$Z_SCORE
+)
+predictors <- as.data.frame(predictors)
+```
+
+
+#Train test split using stratified sampling
+
+```{r}
+trainingRows <- createDataPartition(IC50, p =.8, list=FALSE)
+
+trainPredictors <- predictors[trainingRows,]
+testPredictors <- predictors[-trainingRows,]
+
+trainIC50 <- IC50[trainingRows]
+testIC50 <- IC50[-trainingRows]
+```
+
+#Encode variables that are highly correlated and provide zero variance are removed
+
+```{r}
+#Get rid of variables that are zero variance...
+nzv <- nearZeroVar(trainPredictors)
+trainPredictors <- trainPredictors[, -nzv]
+testPredictors  <- testPredictors[, -nzv]
+
+#...and highly correlated
+correlations <- cor(trainPredictors)
+highCorr <- findCorrelation(correlations, cutoff = 0.75)
+trainPredictors <- trainPredictors[, -highCorr]
+testPredictors  <- testPredictors[, -highCorr] # Remove same columns 
+```
+
+```{r}
+colnames(trainPredictors)
+```
+
+```{r}
+#Before model training we need to use parallel processing so the CPU can run models more quickly
+num_cores <- detectCores() - 1             # Leave 1 core for background tasks
+cl <- makeCluster(num_cores)
+registerDoParallel(cl)
+
+set.seed(seed)
+
+#Set up cross validation 
+fivefoldCV <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
+#repeatedSplits <- trainControl(method = "repeatedcv", number = 5, repeats = 3, allowParallel = TRUE)
+```
+
+```{r}
+#Sanity Check
+dim(trainPredictors)
+dim(testPredictors)
+length(trainIC50)
+length(testIC50)
+```
+
+#Linear Regression
+
+```{r}
+set.seed(seed)
+lin_reg1 <- train(trainPredictors, trainIC50,
+                 method = "lm",
+                 trControl = fivefoldCV)
+lin_reg1
+```
+
+```{r}
+#set.seed(seed)
+#lin_reg2 <- train(trainPredictors, trainIC50,
+#                 method = "lm",
+#                 trControl = repeatedSplits)
+#lin_reg2
+```
+
+#KNN regression
+
+```{r}
+set.seed(seed)
+knn <- train(trainPredictors, trainIC50,
+             method = "kknn",
+             tuneGrid = data.frame(
+             kmax = seq(1, 21, by = 2), 
+             distance = c(2),            
+             kernel = c("rectangular")           
+             ),
+             preProcess = c("center", "scale", "pca"),
+             trControl = fivefoldCV)
+knn
+```
+
+```{r}
+#set.seed(seed)
+#knn2 <- train(trainPredictors, trainIC50,
+#             method = "kknn",
+#             tuneGrid = data.frame(
+#             kmax = seq(2, 12, by = 2), 
+#             distance = 2,            
+#             kernel = "rectangular"           
+#             ),
+#             preProcess = c("center", "scale", "pca"),
+#             trControl = repeatedSplits)
+#knn2
+```
+
+#SVM
+
+```{r}
+set.seed(seed)
+SVM <- train(trainPredictors, trainIC50,
+             method = "svmRadial",
+             tuneLength = 5,
+             preProcess = c("center", "scale", "pca"),
+             trControl = fivefoldCV) 
+SVM
+```
+
+```{r}
+#set.seed(seed)
+#SVM2 <- train(trainPredictors, trainIC50,
+#             method = "svmLinear",
+#             preProcess = c("center", "scale", "pca"),
+#             trControl = repeatedSplits) 
+#SVM2
+```
+
+
+#MARS
+
+```{r}
+set.seed(seed)
+MARSGrid <- expand.grid(degree = 1:2, nprune = 2:30)
+MARS <- train(trainPredictors, trainIC50,
+              method ="earth",
+              tuneGrid = MARSGrid,
+              trControl = fivefoldCV)
+MARS
+```
+
+```{r}
+#set.seed(seed)
+#MARSGrid2 <- expand.grid(degree = 1:4, nprune = 2:20)
+#MARS2 <- train(trainPredictors, trainIC50,
+#              method ="earth",
+#              tuneGrid = MARSGrid2,
+#              trControl = repeatedSplits)
+#MARS2
+```
+
+#Random Forest
+
+```{r}
+max_mtry <- ncol(trainPredictors)
+max_mtry
+```
+
+```{r}
+mtryGrid <- data.frame(mtry = floor(seq(2, ncol(trainPredictors), length = 10)))
+set.seed(seed)
+rf <- train(trainPredictors, trainIC50,
+                method = "rf",
+                tuneGrid = mtryGrid,
+                ntree = 750,
+                importance = TRUE,
+                trControl = fivefoldCV)
+rf
+```
+
+```{r}
+#mtryGrid2 <- data.frame(mtry = floor(seq(10, ncol(trainPredictors)/2, length = 15)))
+
+#set.seed(seed)
+#rf2 <- train(trainPredictors, trainIC50,
+#                method = "rf",
+#                tuneGrid = mtryGrid2,
+#                ntree = 500,
+#                importance = TRUE,
+#                trControl = repeatedSplits)
+#rf2
+```
+
+
+```{r}
+#test our model predictions
+testResults_lin_regr <- predict(lin_reg1, testPredictors)
+testResults_knn_regr <- predict(knn, testPredictors)
+testResults_SVM <- predict(SVM, testPredictors)
+testResults_MARS <- predict(MARS, testPredictors)
+testResults_rf <- predict
+
+#Use postSample to evaluate the RMSE, Rsquared, and MAE
+lin_regr_metrics  <- postResample(testResults_lin_regr, testIC50)
+knn_regr_metrics  <- postResample(predict(knn, testPredictors), testIC50)
+SVM_metrics  <- postResample(predict(SVM, testPredictors), testIC50)
+MARS_metrics <- postResample(predict(MARS, testPredictors), testIC50)
+rf_metrics   <- postResample(predict(rf, testPredictors), testIC50)
+
+#model results on y_test 
+model_results <- cbind(
+  Linear_Regression = lin_regr_metrics,
+  Knn_Regression = knn_regr_metrics,
+  SVM = SVM_metrics,
+  MARS = MARS_metrics,
+  Random_Forest = rf_metrics
+)
+model_results
+```
+
+
+
+
+
+
+
+#It would cool to graph how affecting tuning parameters can change the outcome of
+#models. I did it for a different SVM model down here but this is just some ideas.
+
+
+
+#Choosing Z-Score as a predictor to look at to see how the tuning parameters impact SVM model
+
+```{r}
+z_score_line <- tibble(Z_SCORE = seq(min(trainPredictors$Z_SCORE),
+                                     max(trainPredictors$Z_SCORE),
+                                     length.out = 200))
+#z_score_line
+```
+
+```{r}
+SVM_explore <- function(cost, epsilon, 
+                        data_grid = z_score_line, train_data = trainPredictors,
+                        train_y = trainIC50) {
+  
+svmFit <- ksvm(
+  x = as.matrix(train_data$Z_SCORE),
+  y = train_y,
+  kernel = "rbfdot",
+  C = cost,
+  epsilon = epsilon)
+
+predictions <- predict(svmFit, as.matrix(data_grid$Z_SCORE))
+
+tibble(
+  Z_SCORE = data_grid$Z_SCORE,
+  IC50_pred = predictions,
+  cost = cost,
+  epsilon = epsilon)
+
+}
+
+```
+
+#Changes that occur to SVM model when cost changes
+
+```{r}
+cost_varies <- 10^seq(-2,1, length = 4) #change in cost (0.01, 0.10, 1.00, 10.00)
+eps01_fixed <- rep(0.1, 4) #4 iterations of the same epsilon value 0.1
+
+cost_curves <- map2_dfr(cost_varies,
+                        eps01_fixed,
+                        ~ SVM_explore(.x, .y))
+ggplot(cost_curves, aes(x = Z_SCORE, y = IC50_pred, color = factor(cost))) + geom_line(size=1)
+```
+
+#Changes that occur to SVM model when epsilon changes
+
+```{r}
+eps_varies <- c(0.01, 0.1, 0.5, 1.0) #epsilon values vary
+cost_fixed <- rep(0.1, 4) #cost values are fixed
+eps_curves <- map2_dfr(cost_fixed,
+                        eps_varies,
+                        ~ SVM_explore(.x, .y))
+ggplot(eps_curves, aes(x = Z_SCORE, y = IC50_pred, color = factor(epsilon))) + geom_line(size=1)
+```
+
+
+
+```{r}
+#Stop the parallel cluster when models are finished training
+stopCluster(cl)
+registerDoSEQ()
+```
