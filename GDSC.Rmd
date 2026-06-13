@@ -37,6 +37,7 @@ data  <- read.csv(data_url)
 str(data)
 head(data)
 dim(data) #242,035 entries, 19 total columns
+colnames(data)
 ```
 
 ```{r}
@@ -68,7 +69,7 @@ sum(data$Cancer.Type..matching.TCGA.label. == "" & # see all where both columns 
 
 # removing irrelevant and redundant columns
 data2 <- data %>%
-  select(-COSMIC_ID, -DRUG_ID, -Screen.Medium, -Growth.Properties, -CNA, -Gene.Expression, -Methylation)
+  select(-COSMIC_ID, -DRUG_ID, -Screen.Medium, -Growth.Properties, -CNA, -Gene.Expression, Methylation)
 str(data2)
 ```
 
@@ -475,12 +476,7 @@ str(data_f)
 #Instead predictors like CELL_LINE_NAME and DRUG_NAME are removed from the model to decrease computation time
 #and they did not provide predictive power
 
-
-```{r} 
-data_f <- data_f %>% select(-CELL_LINE_NAME, -DRUG_NAME)
-```
-
-#Seed is set. Data observations amount are reduced for faster training.
+#Seed is set. Split the data on cell line
 
 ```{r}
 seed <- 756
@@ -489,85 +485,161 @@ set.seed(seed)
 #Target variable
 IC50 <- data_f$LN_IC50
 
-#Predictors
-data_f <- as.data.frame(data_f)
+#Having just predictors in the data set
+predictors <- data_f %>% select(-LN_IC50)
 
-row_reduction <- 0.10
+#Get unique cell lines
+cell_lines_names <- unique(predictors$CELL_LINE_NAME)
 
-#Get 10 percent of the data amount randomly
-rrow_count <- sample(nrow(data_f), size=floor(row_reduction*nrow(data_f)))
+#20 percent of the cell line names as left as test (splitting the data based on cell line name)
+test_set_samples <- sample(cell_lines_names, size = floor(0.2 * length(cell_lines_names)))
 
-#Reduced the the amount of observations for modeling
-data_f <- data_f[rrow_count, ]
-IC50 <- IC50[rrow_count]
+testingRows <- predictors$CELL_LINE_NAME %in% test_set_samples
+
+testPredictors <- predictors[testingRows,]
+trainPredictors <- predictors[!testingRows,]
+
+trainIC50 <- IC50[!testingRows]
+testIC50  <- IC50[testingRows]
+
+dim(trainPredictors)
+dim(testPredictors)
+
+length(trainIC50)
+length(testIC50)
 ```
 
 #Encode -- One hot encode all the predictor values manually (not through caret model)
 #that will be used for our model predictions
 
 ```{r}
-#Encoding TARGET variables
-target_encode <- model.matrix(~ TARGET - 1, data = data_f)
+#Make variables from character to factor type for encoding 
+trainPredictors$TARGET <- factor(trainPredictors$TARGET)
+testPredictors$TARGET <- factor(testPredictors$TARGET,
+                                levels = levels(trainPredictors$TARGET))
 
-#Encoding the TARGET_PATHWAY variables
-pathway_encode <- model.matrix(~ TARGET_PATHWAY - 1, data = data_f)
+trainPredictors$TARGET_PATHWAY <- factor(trainPredictors$TARGET_PATHWAY)
+testPredictors$TARGET_PATHWAY  <- factor(testPredictors$TARGET_PATHWAY,
+                                         levels = levels(trainPredictors$TARGET_PATHWAY))
 
-#Encoding TCGA_DESC
-tissue_encode <- dummyVars(~ TCGA_DESC, data = data_f)
-tissue_encode <- predict(tissue_encode, data_f)
+# MSI
+trainPredictors$Microsatellite.instability.Status..MSI. <- 
+    factor(trainPredictors$Microsatellite.instability.Status..MSI.)
 
-#Encoding GDSC Tissue Descriptor 2
-gdsctd2_encode <- dummyVars(~ GDSC.Tissue.descriptor.2, data = data_f)
-gdsctd2_encode <- predict(gdsctd2_encode, data_f)
-
-#Since only 3 types in predictor we can make it discrete numeric 
-data_f$MSI <- as.numeric(as.factor(data_f$Microsatellite.instability.Status..MSI.))
+testPredictors$Microsatellite.instability.Status..MSI.  <- 
+    factor(testPredictors$Microsatellite.instability.Status..MSI.,
+           levels = levels(trainPredictors$Microsatellite.instability.Status..MSI.))
 ```
 
-#Combine all encoded variables 
+#Encoding TARGET and TARGET_PATHWAY variables
 
 ```{r}
-predictors <- cbind(
-  target_encode,
-  pathway_encode,
-  tissue_encode,
-  gdsctd2_encode,
-  MSI = data_f$MSI,
-  Z_SCORE = data_f$Z_SCORE
+target_encode_tr  <- model.matrix(~ TARGET - 1, data = trainPredictors)
+target_encode_tst <- model.matrix(~ TARGET - 1, data = testPredictors)
+
+pathway_encode_tr  <- model.matrix(~ TARGET_PATHWAY - 1, data = trainPredictors)
+pathway_encode_tst <- model.matrix(~ TARGET_PATHWAY - 1, data = testPredictors)
+
+#Line up columns for model testing
+target_encode_tst  <- target_encode_tst[,  colnames(target_encode_tr),  drop = FALSE]
+pathway_encode_tst <- pathway_encode_tst[, colnames(pathway_encode_tr), drop = FALSE]
+```
+
+#Encoding TCGA_DESC variable
+
+```{r}
+tissue_dummies <- dummyVars(~ TCGA_DESC, data = trainPredictors)
+tissue_encode_tr  <- predict(tissue_dummies, trainPredictors)
+tissue_encode_tst <- predict(tissue_dummies, testPredictors)
+```
+
+#Same encoding process for GDSC Tissue Descriptor 2 as TCGA_DESC
+
+```{r}
+gdsctd2_dummies <- dummyVars(~ GDSC.Tissue.descriptor.2, data = trainPredictors)
+gdsctd2_encode_tr  <- predict(gdsctd2_dummies, trainPredictors)
+gdsctd2_encode_tst <- predict(gdsctd2_dummies, testPredictors)
+```
+
+#Encoding continuous variables
+
+```{r}
+MSI_encode_tr <- as.numeric(trainPredictors$Microsatellite.instability.Status..MSI.)
+MSI_encode_tst  <- as.numeric(testPredictors$Microsatellite.instability.Status..MSI.)
+
+Zscore_encode_tr <- trainPredictors$Z_SCORE
+Zscore_encode_tst <- testPredictors$Z_SCORE
+```
+
+```{r}
+trainEncodedPredictors <- data.frame(
+  target_encode_tr,
+  pathway_encode_tr,
+  tissue_encode_tr,
+  gdsctd2_encode_tr,
+  MSI_encode_tr,
+  Zscore_encode_tr
 )
-predictors <- as.data.frame(predictors)
+
+testEncodedPredictors <- data.frame(
+  target_encode_tst,
+  pathway_encode_tst,
+  tissue_encode_tst,
+  gdsctd2_encode_tst,
+  MSI_encode_tst,
+  Zscore_encode_tst
+)
 ```
 
-
-#Train test split using stratified sampling
+#Reduce rows for the split. Data observations amount are reduced for faster training.
 
 ```{r}
-trainingRows <- createDataPartition(IC50, p =.8, list=FALSE)
+set.seed(seed)
+row_reduction <- 0.10
 
-trainPredictors <- predictors[trainingRows,]
-testPredictors <- predictors[-trainingRows,]
+train_cell_lines <- unique(trainPredictors$CELL_LINE_NAME)
+reduced_cell_lines_tr <- sample(train_cell_lines,
+                                size = floor(row_reduction * length(train_cell_lines)))
 
-trainIC50 <- IC50[trainingRows]
-testIC50 <- IC50[-trainingRows]
+reducedRows <- trainPredictors$CELL_LINE_NAME %in% reduced_cell_lines_tr
+
+trainEncodedPredictors <- trainEncodedPredictors[reducedRows, ]
+trainIC50 <- trainIC50[reducedRows]
 ```
 
 #Encode variables that are highly correlated and provide zero variance are removed
 
 ```{r}
 #Get rid of variables that are zero variance...
-nzv <- nearZeroVar(trainPredictors)
-trainPredictors <- trainPredictors[, -nzv]
-testPredictors  <- testPredictors[, -nzv]
+nzv <- nearZeroVar(trainEncodedPredictors)
+trainEncodedPredictors <- trainEncodedPredictors[, -nzv]
+testEncodedPredictors  <- testEncodedPredictors[, -nzv]
 
 #...and highly correlated
-correlations <- cor(trainPredictors)
+correlations <- cor(trainEncodedPredictors)
 highCorr <- findCorrelation(correlations, cutoff = 0.75)
-trainPredictors <- trainPredictors[, -highCorr]
-testPredictors  <- testPredictors[, -highCorr] # Remove same columns 
+trainEncodedPredictors <- trainEncodedPredictors[, -highCorr]
+testEncodedPredictors  <- testEncodedPredictors[, -highCorr] # Remove same columns 
 ```
 
+#Have train and test sets have the same number of predictors
+
 ```{r}
-colnames(trainPredictors)
+#Align columns for train and test
+common_cols <- union(colnames(trainEncodedPredictors),
+                     colnames(testEncodedPredictors))
+
+#Add missing columns to training set
+missing_train <- setdiff(common_cols, colnames(trainEncodedPredictors))
+trainEncodedPredictors[, missing_train] <- 0
+
+#Add missing columns to test set
+missing_test <- setdiff(common_cols, colnames(testEncodedPredictors))
+testEncodedPredictors[, missing_test] <- 0
+
+#Reorder columns 
+trainEncodedPredictors <- trainEncodedPredictors[, common_cols]
+testEncodedPredictors  <- testEncodedPredictors[, common_cols]
 ```
 
 ```{r}
@@ -585,17 +657,16 @@ fivefoldCV <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 
 ```{r}
 #Sanity Check
-dim(trainPredictors)
-dim(testPredictors)
+dim(trainEncodedPredictors)
+dim(testEncodedPredictors)
 length(trainIC50)
-length(testIC50)
 ```
 
 #Linear Regression
 
 ```{r}
 set.seed(seed)
-lin_reg1 <- train(trainPredictors, trainIC50,
+lin_reg1 <- train(trainEncodedPredictors, trainIC50,
                  method = "lm",
                  trControl = fivefoldCV)
 lin_reg1
@@ -613,14 +684,14 @@ lin_reg1
 
 ```{r}
 set.seed(seed)
-knn <- train(trainPredictors, trainIC50,
+knn <- train(trainEncodedPredictors, trainIC50,
              method = "kknn",
              tuneGrid = data.frame(
              kmax = seq(1, 21, by = 2), 
              distance = c(2),            
              kernel = c("rectangular")           
              ),
-             preProcess = c("center", "scale", "pca"),
+             preProcess = c("center", "scale"),
              trControl = fivefoldCV)
 knn
 ```
@@ -634,7 +705,7 @@ knn
 #             distance = 2,            
 #             kernel = "rectangular"           
 #             ),
-#             preProcess = c("center", "scale", "pca"),
+#             preProcess = c("center", "scale"),
 #             trControl = repeatedSplits)
 #knn2
 ```
@@ -643,10 +714,10 @@ knn
 
 ```{r}
 set.seed(seed)
-SVM <- train(trainPredictors, trainIC50,
+SVM <- train(trainEncodedPredictors, trainIC50,
              method = "svmRadial",
-             tuneLength = 5,
-             preProcess = c("center", "scale", "pca"),
+             tuneLength = 10,
+             preProcess = c("center", "scale"),
              trControl = fivefoldCV) 
 SVM
 ```
@@ -665,8 +736,8 @@ SVM
 
 ```{r}
 set.seed(seed)
-MARSGrid <- expand.grid(degree = 1:2, nprune = 2:30)
-MARS <- train(trainPredictors, trainIC50,
+MARSGrid <- expand.grid(degree = 1:2, nprune = 2:20)
+MARS <- train(trainEncodedPredictors, trainIC50,
               method ="earth",
               tuneGrid = MARSGrid,
               trControl = fivefoldCV)
@@ -676,7 +747,7 @@ MARS
 ```{r}
 #set.seed(seed)
 #MARSGrid2 <- expand.grid(degree = 1:4, nprune = 2:20)
-#MARS2 <- train(trainPredictors, trainIC50,
+#MARS2 <- train(trainEncodedPredictors, trainIC50,
 #              method ="earth",
 #              tuneGrid = MARSGrid2,
 #              trControl = repeatedSplits)
@@ -686,17 +757,15 @@ MARS
 #Random Forest
 
 ```{r}
-max_mtry <- ncol(trainPredictors)
-max_mtry
+mtryGrid <- data.frame(mtry = floor(seq(2, ncol(trainEncodedPredictors)/2, length = 10)))
 ```
 
 ```{r}
-mtryGrid <- data.frame(mtry = floor(seq(2, ncol(trainPredictors), length = 10)))
 set.seed(seed)
-rf <- train(trainPredictors, trainIC50,
+rf <- train(trainEncodedPredictors, trainIC50,
                 method = "rf",
                 tuneGrid = mtryGrid,
-                ntree = 750,
+                ntree = 500,
                 importance = TRUE,
                 trControl = fivefoldCV)
 rf
@@ -706,7 +775,7 @@ rf
 #mtryGrid2 <- data.frame(mtry = floor(seq(10, ncol(trainPredictors)/2, length = 15)))
 
 #set.seed(seed)
-#rf2 <- train(trainPredictors, trainIC50,
+#rf2 <- train(trainEncodedPredictors, trainIC50,
 #                method = "rf",
 #                tuneGrid = mtryGrid2,
 #                ntree = 500,
@@ -718,18 +787,18 @@ rf
 
 ```{r}
 #test our model predictions
-testResults_lin_regr <- predict(lin_reg1, testPredictors)
-testResults_knn_regr <- predict(knn, testPredictors)
-testResults_SVM <- predict(SVM, testPredictors)
-testResults_MARS <- predict(MARS, testPredictors)
-testResults_rf <- predict
+testResults_lin_regr <- predict(lin_reg1, testEncodedPredictors)
+testResults_knn_regr <- predict(knn, testEncodedPredictors)
+testResults_SVM <- predict(SVM, testEncodedPredictors)
+testResults_MARS <- predict(MARS, testEncodedPredictors)
+testResults_rf <- predict(rf, testEncodedPredictors)
 
 #Use postSample to evaluate the RMSE, Rsquared, and MAE
 lin_regr_metrics  <- postResample(testResults_lin_regr, testIC50)
-knn_regr_metrics  <- postResample(predict(knn, testPredictors), testIC50)
-SVM_metrics  <- postResample(predict(SVM, testPredictors), testIC50)
-MARS_metrics <- postResample(predict(MARS, testPredictors), testIC50)
-rf_metrics   <- postResample(predict(rf, testPredictors), testIC50)
+knn_regr_metrics  <- postResample(predict(knn, testEncodedPredictors), testIC50)
+SVM_metrics  <- postResample(predict(SVM, testEncodedPredictors), testIC50)
+MARS_metrics <- postResample(predict(MARS, testEncodedPredictors), testIC50)
+rf_metrics   <- postResample(predict(rf, testEncodedPredictors), testIC50)
 
 #model results on y_test 
 model_results <- cbind(
