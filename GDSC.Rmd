@@ -522,7 +522,6 @@ trainPredictors$TARGET_PATHWAY <- factor(trainPredictors$TARGET_PATHWAY)
 testPredictors$TARGET_PATHWAY  <- factor(testPredictors$TARGET_PATHWAY,
                                          levels = levels(trainPredictors$TARGET_PATHWAY))
 
-# MSI
 trainPredictors$Microsatellite.instability.Status..MSI. <- 
     factor(trainPredictors$Microsatellite.instability.Status..MSI.)
 
@@ -594,32 +593,32 @@ testEncodedPredictors <- data.frame(
 #Reduce rows for the split. Data observations amount are reduced for faster training.
 
 ```{r}
-set.seed(seed)
-row_reduction <- 0.10
+#set.seed(seed)
+#row_reduction <- 0.10
 
-train_cell_lines <- unique(trainPredictors$CELL_LINE_NAME)
-reduced_cell_lines_tr <- sample(train_cell_lines,
-                                size = floor(row_reduction * length(train_cell_lines)))
+#train_cell_lines <- unique(trainPredictors$CELL_LINE_NAME)
+#reduced_cell_lines_tr <- sample(train_cell_lines,
+                                #size = floor(row_reduction * length(train_cell_lines)))
 
-reducedRows <- trainPredictors$CELL_LINE_NAME %in% reduced_cell_lines_tr
+#reducedRows <- trainPredictors$CELL_LINE_NAME %in% reduced_cell_lines_tr
 
-trainEncodedPredictors <- trainEncodedPredictors[reducedRows, ]
-trainIC50 <- trainIC50[reducedRows]
+#trainEncodedPredictors <- trainEncodedPredictors[reducedRows, ]
+#trainIC50 <- trainIC50[reducedRows]
 ```
 
 #Encode variables that are highly correlated and provide zero variance are removed
 
 ```{r}
 #Get rid of variables that are zero variance...
-nzv <- nearZeroVar(trainEncodedPredictors)
-trainEncodedPredictors <- trainEncodedPredictors[, -nzv]
-testEncodedPredictors  <- testEncodedPredictors[, -nzv]
+#nzv <- nearZeroVar(trainEncodedPredictors)
+#trainEncodedPredictors <- trainEncodedPredictors[, -nzv]
+#testEncodedPredictors  <- testEncodedPredictors[, -nzv]
 
 #...and highly correlated
-correlations <- cor(trainEncodedPredictors)
-highCorr <- findCorrelation(correlations, cutoff = 0.75)
-trainEncodedPredictors <- trainEncodedPredictors[, -highCorr]
-testEncodedPredictors  <- testEncodedPredictors[, -highCorr] # Remove same columns 
+#correlations <- cor(trainEncodedPredictors)
+#highCorr <- findCorrelation(correlations, cutoff = 0.75)
+#trainEncodedPredictors <- trainEncodedPredictors[, -highCorr]
+#testEncodedPredictors  <- testEncodedPredictors[, -highCorr] # Remove same columns 
 ```
 
 #Have train and test sets have the same number of predictors
@@ -651,6 +650,7 @@ registerDoParallel(cl)
 set.seed(seed)
 
 #Set up cross validation 
+threefoldCV <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
 fivefoldCV <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 #repeatedSplits <- trainControl(method = "repeatedcv", number = 5, repeats = 3, allowParallel = TRUE)
 ```
@@ -660,63 +660,187 @@ fivefoldCV <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 dim(trainEncodedPredictors)
 dim(testEncodedPredictors)
 length(trainIC50)
+trainEncodedPredictors <- trainEncodedPredictors %>% select(-Zscore_encode_tr)
 ```
 
-#Linear Regression
+#Linear Regression use as a baseline
 
 ```{r}
 set.seed(seed)
-lin_reg1 <- train(trainEncodedPredictors, trainIC50,
+lin_reg_baseline <- train(trainEncodedPredictors, trainIC50,
                  method = "lm",
-                 trControl = fivefoldCV)
-lin_reg1
+                 trControl = threefoldCV)
+lin_reg_baseline
 ```
 
 ```{r}
-#set.seed(seed)
-#lin_reg2 <- train(trainPredictors, trainIC50,
-#                 method = "lm",
-#                 trControl = repeatedSplits)
-#lin_reg2
+lin_reg_Imp <- varImp(lin_reg_baseline, scale = FALSE)
+plot(lin_reg_Imp, top = 25)
 ```
+
+```{r}
+set.seed(seed)
+knn_baseline <- train(trainEncodedPredictors, trainIC50,
+             method = "kknn",
+             tuneGrid = data.frame(
+             kmax = c(3, 7, 11), 
+             distance = 2,            
+             kernel = "rectangular"           
+             ),
+             preProcess = c("center", "scale"),
+             trControl = threefoldCV)
+knn_baseline
+```
+
+```{r}
+knn_Imp <- varImp(knn_baseline, scale = FALSE)
+plot(knn_Imp, top = 25)
+```
+
+
+```{r}
+set.seed(seed)
+svmGrid_base <- expand.grid(
+                sigma = c(0.001, 0.01, 0.1),
+                C = c(1, 10))
+SVM_baseline <- train(trainEncodedPredictors, trainIC50,
+             method = "svmRadial",
+             tuneGrid = svmGrid_base,
+             preProcess = c("center", "scale"),
+             trControl = threefoldCV) 
+SVM_baseline
+```
+
+```{r}
+SVM_Imp <- varImp(SVM_baseline, scale = FALSE)
+plot(SVM_Imp, top = 25)
+```
+
+```{r}
+set.seed(seed)
+MARSGrid_base <- expand.grid(
+                  degree = 1,
+                  nprune = seq(2, 20, length = 10))
+MARS_baseline <- train(trainEncodedPredictors, trainIC50,
+              method ="earth",
+              tuneGrid = MARSGrid_base,
+              trControl = threefoldCV)
+MARS_baseline
+```
+
+```{r}
+MARS_Imp <- varImp(MARS_baseline, scale = FALSE)
+plot(MARS_Imp, top = 25)
+```
+
+```{r}
+set.seed(seed)
+mtryGrid_base <- data.frame(mtry = c(2, 4, 6, 8, 10))
+rf_baseline <- train(trainEncodedPredictors, trainIC50,
+                method = "rf",
+                tuneGrid = mtryGrid_base,
+                ntree = 500,
+                importance = FALSE,
+                trControl = threefoldCV
+            )
+rf
+```
+
+```{r}
+rf_Imp <- varImp(rf_baseline, scale = FALSE)
+plot(rf_Imp, top = 25)
+```
+
+
+#Important predictors that will be used for our other training models
+
+```{r}
+important_feature_values <- lin_reg_Imp$importance$Overall
+length(important_feature_values)
+names(important_feature_values) <- rownames(lin_reg_Imp$importance)
+top25 <- sort(important_feature_values, decreasing = TRUE)[1:25]
+top25
+top25_cols <- names(sort(important_feature_values, decreasing = TRUE))[1:25]
+top25_cols
+```
+
+
+
+#Train all features with reduced predictors
+
+```{r}
+trainReduced <- trainEncodedPredictors[, top25_cols]
+testReduced  <- testEncodedPredictors[, top25_cols]
+```
+
+#Reduced Rows for computation speed
+
+```{r}
+set.seed(seed)
+row_reduction <- 0.40
+
+train_cell_lines <- unique(trainPredictors$CELL_LINE_NAME)
+test_cell_lines <- unique(testPredictors$CELL_LINE_NAME)
+
+reduced_cell_lines_tr <- sample(
+  train_cell_lines,
+  size = floor(row_reduction * length(train_cell_lines))
+)
+
+reduced_cell_lines_tst <- sample(
+  test_cell_lines,
+  size = floor(row_reduction * length(test_cell_lines)) 
+)
+
+reducedRows_tr <- trainPredictors$CELL_LINE_NAME %in% reduced_cell_lines_tr
+
+trainReducedRows <- trainReduced[reducedRows_tr,]
+
+trainIC50ReducedRows <- trainIC50[reducedRows_tr]
+
+reducedRows_tst <- testPredictors$CELL_LINE_NAME %in% reduced_cell_lines_tst
+
+testReducedRows <- testReduced[reducedRows_tst,]
+testIC50ReducedRows <- testIC50[reducedRows_tst]
+
+
+
+```
+
+
+```{r}
+lin_reg <- train(trainReducedRows, trainIC50ReducedRows,
+                 method = "lm",
+                 trControl = fivefoldCV)
+lin_reg
+```
+
 
 #KNN regression
 
 ```{r}
 set.seed(seed)
-knn <- train(trainEncodedPredictors, trainIC50,
+knn <- train(trainReducedRows, trainIC50ReducedRows,
              method = "kknn",
              tuneGrid = data.frame(
-             kmax = seq(1, 21, by = 2), 
-             distance = c(2),            
-             kernel = c("rectangular")           
+             kmax = seq(1, 11, by = 2), 
+             distance = 2,            
+             kernel = "rectangular"           
              ),
              preProcess = c("center", "scale"),
              trControl = fivefoldCV)
 knn
 ```
 
-```{r}
-#set.seed(seed)
-#knn2 <- train(trainPredictors, trainIC50,
-#             method = "kknn",
-#             tuneGrid = data.frame(
-#             kmax = seq(2, 12, by = 2), 
-#             distance = 2,            
-#             kernel = "rectangular"           
-#             ),
-#             preProcess = c("center", "scale"),
-#             trControl = repeatedSplits)
-#knn2
-```
-
 #SVM
 
 ```{r}
 set.seed(seed)
-SVM <- train(trainEncodedPredictors, trainIC50,
+svmGrid <- expand.grid(sigma = 10^seq(-2, 1, length = 4),
+                       C = 10^seq(-2,1, length = 4))
+SVM <- train(trainReducedRows, trainIC50ReducedRows,
              method = "svmRadial",
-             tuneLength = 10,
+             tuneGrid = svmGrid,
              preProcess = c("center", "scale"),
              trControl = fivefoldCV) 
 SVM
@@ -737,7 +861,7 @@ SVM
 ```{r}
 set.seed(seed)
 MARSGrid <- expand.grid(degree = 1:2, nprune = 2:20)
-MARS <- train(trainEncodedPredictors, trainIC50,
+MARS <- train(trainReducedRows, trainIC50ReducedRows,
               method ="earth",
               tuneGrid = MARSGrid,
               trControl = fivefoldCV)
@@ -757,49 +881,40 @@ MARS
 #Random Forest
 
 ```{r}
-mtryGrid <- data.frame(mtry = floor(seq(2, ncol(trainEncodedPredictors)/2, length = 10)))
-```
-
-```{r}
 set.seed(seed)
-rf <- train(trainEncodedPredictors, trainIC50,
+mtryGrid <- data.frame(
+            mtry = c(1:10, 12, 15, 20))
+rf <- train(trainReducedRows, trainIC50ReducedRows,
                 method = "rf",
                 tuneGrid = mtryGrid,
                 ntree = 500,
                 importance = TRUE,
-                trControl = fivefoldCV)
+                trControl = fivefoldCV
+            )
 rf
 ```
 
-```{r}
-#mtryGrid2 <- data.frame(mtry = floor(seq(10, ncol(trainPredictors)/2, length = 15)))
 
-#set.seed(seed)
-#rf2 <- train(trainEncodedPredictors, trainIC50,
-#                method = "rf",
-#                tuneGrid = mtryGrid2,
-#                ntree = 500,
-#                importance = TRUE,
-#                trControl = repeatedSplits)
-#rf2
+
+```{r}
+#Keep only the test rows whose cell lines were used in the reduced training set.
+testResults_lin_regr <- predict(lin_reg, testReduced2)
+testResults_knn_regr <- predict(knn, testReduced2)
+testResults_SVM <- predict(SVM, testReduced2)
+testResults_MARS <- predict(MARS, testReduced2)
+testResults_rf <- predict(rf, testReduced2)
+
+#Use postSample to evaluate the RMSE, Rsquared, and MAE
+lin_regr_metrics  <- postResample(testResults_lin_regr, testIC50Reduced)
+knn_regr_metrics  <- postResample(testResults_knn_regr, testIC50Reduced)
+SVM_metrics  <- postResample(testResults_SVM, testIC50Reduced)
+MARS_metrics <- postResample(testResults_MARS, testIC50Reduced)
+rf_metrics   <- postResample(testResults_rf, testIC50Reduced)
+
 ```
 
 
 ```{r}
-#test our model predictions
-testResults_lin_regr <- predict(lin_reg1, testEncodedPredictors)
-testResults_knn_regr <- predict(knn, testEncodedPredictors)
-testResults_SVM <- predict(SVM, testEncodedPredictors)
-testResults_MARS <- predict(MARS, testEncodedPredictors)
-testResults_rf <- predict(rf, testEncodedPredictors)
-
-#Use postSample to evaluate the RMSE, Rsquared, and MAE
-lin_regr_metrics  <- postResample(testResults_lin_regr, testIC50)
-knn_regr_metrics  <- postResample(predict(knn, testEncodedPredictors), testIC50)
-SVM_metrics  <- postResample(predict(SVM, testEncodedPredictors), testIC50)
-MARS_metrics <- postResample(predict(MARS, testEncodedPredictors), testIC50)
-rf_metrics   <- postResample(predict(rf, testEncodedPredictors), testIC50)
-
 #model results on y_test 
 model_results <- cbind(
   Linear_Regression = lin_regr_metrics,
