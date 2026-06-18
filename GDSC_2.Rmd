@@ -1,4 +1,10 @@
 ---
+title: "GDSC_2"
+author: "Samuel Scott"
+date: "`r Sys.Date()`"
+output: html_document
+---
+---
 title: "Genomics of Drug Sensitivity in Cancer (GDSC) Project"
 author: "Sam Scott, Megan Lee, Titus Sun"
 date: "2026-06-01"
@@ -590,6 +596,36 @@ testEncodedPredictors <- data.frame(
 )
 ```
 
+#Reduce rows for the split. Data observations amount are reduced for faster training.
+
+```{r}
+#set.seed(seed)
+#row_reduction <- 0.10
+
+#train_cell_lines <- unique(trainPredictors$CELL_LINE_NAME)
+#reduced_cell_lines_tr <- sample(train_cell_lines,
+                                #size = floor(row_reduction * length(train_cell_lines)))
+
+#reducedRows <- trainPredictors$CELL_LINE_NAME %in% reduced_cell_lines_tr
+
+#trainEncodedPredictors <- trainEncodedPredictors[reducedRows, ]
+#trainIC50 <- trainIC50[reducedRows]
+```
+
+#Encode variables that are highly correlated and provide zero variance are removed
+
+```{r}
+#Get rid of variables that are zero variance...
+#nzv <- nearZeroVar(trainEncodedPredictors)
+#trainEncodedPredictors <- trainEncodedPredictors[, -nzv]
+#testEncodedPredictors  <- testEncodedPredictors[, -nzv]
+
+#...and highly correlated
+#correlations <- cor(trainEncodedPredictors)
+#highCorr <- findCorrelation(correlations, cutoff = 0.75)
+#trainEncodedPredictors <- trainEncodedPredictors[, -highCorr]
+#testEncodedPredictors  <- testEncodedPredictors[, -highCorr] # Remove same columns 
+```
 
 #Have train and test sets have the same number of predictors
 
@@ -673,6 +709,7 @@ top25_cols
 ```{r}
 trainReduced <- trainEncodedPredictors[, top25_cols]
 testReduced  <- testEncodedPredictors[, top25_cols]
+dim(testReduced)
 ```
 
 #Reduced Rows for computation speed
@@ -777,6 +814,7 @@ registerDoSEQ()
 target_microtibule_stabiliser <- tibble(target_microtibule_stabiliser = seq(min(trainReducedRows$TARGETMicrotubule.stabiliser),
                                      max(trainReducedRows$TARGETMicrotubule.stabiliser),
                                      length.out = 200))
+target_microtibule_stabiliser
 ```
 
 ```{r}
