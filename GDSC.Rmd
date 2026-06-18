@@ -590,7 +590,6 @@ testEncodedPredictors <- data.frame(
 )
 ```
 
-
 #Have train and test sets have the same number of predictors
 
 ```{r}
@@ -643,7 +642,6 @@ lin_reg_baseline <- train(trainEncodedPredictors, trainIC50,
                  method = "lm",
                  trControl = fivefoldCV)
 lin_reg_baseline
-saveRDS(lin_reg_baseline, "lin_reg_baseline.rds")
 
 #Stop the parallel cluster when models are finished training
 stopCluster(cl)
@@ -711,7 +709,7 @@ lin_reg <- train(trainReducedRows, trainIC50ReducedRows,
                  method = "lm",
                  trControl = threefoldCV)
 lin_reg
-saveRDS(lin_reg, "lin_reg_model.rds")
+
 #Stop the parallel cluster when models are finished training
 stopCluster(cl)
 registerDoSEQ()
@@ -737,7 +735,6 @@ knn <- train(trainReducedRows, trainIC50ReducedRows,
              preProcess = c("center", "scale"),
              trControl = threefoldCV)
 knn
-saveRDS(knn, "knn_model.rds")
 
 #Stop the parallel cluster when models are finished training
 stopCluster(cl)
@@ -765,7 +762,6 @@ SVM <- train(trainReducedRows, trainIC50ReducedRows,
              preProcess = c("center", "scale"),
              trControl = threefoldCV) 
 SVM
-saveRDS(SVM, "svm_model.rds")
 #Stop the parallel cluster when models are finished training
 stopCluster(cl)
 registerDoSEQ()
@@ -888,7 +884,6 @@ MARS <- train(trainReducedRows_num, trainIC50ReducedRows,
               tuneGrid = MARSGrid,
               trControl = threefoldCV)
 MARS
-saveRDS(MARS, "MARS_model.rds")
 
 #Stop the parallel cluster when models are finished training
 stopCluster(cl)
@@ -899,15 +894,6 @@ registerDoSEQ()
 plot(MARS)
 ```
 
-```{r}
-#set.seed(seed)
-#MARSGrid2 <- expand.grid(degree = 1:4, nprune = 2:20)
-#MARS2 <- train(trainEncodedPredictors, trainIC50,
-#              method ="earth",
-#              tuneGrid = MARSGrid2,
-#              trControl = repeatedSplits)
-#MARS2
-```
 
 #Random Forest
 
@@ -928,7 +914,6 @@ rf <- train(trainReducedRows, trainIC50ReducedRows,
                 trControl = threefoldCV
             )
 rf
-saveRDS(rf, "rf_model.rds")
 
 #Stop the parallel cluster when models are finished training
 stopCluster(cl)
