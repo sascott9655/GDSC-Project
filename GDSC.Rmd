@@ -2,7 +2,7 @@
 title: "Genomics of Drug Sensitivity in Cancer (GDSC) Project"
 author: "Sam Scott, Megan Lee, Titus Sun"
 date: "2026-06-01"
-output: github_document
+output: html_document
 ---
 
 ```{r warning=FALSE, message=FALSE}
@@ -619,8 +619,8 @@ fivefoldCV <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 
 ```{r}
 #Getting rid of Z-score
-trainEncodedPredictors <- trainEncodedPredictors %>% select(-Zscore_encode_tr)
-testEncodedPredictors  <- testEncodedPredictors  %>% select(-Zscore_encode_tr)
+#trainEncodedPredictors <- trainEncodedPredictors %>% select(-Zscore_encode_tr)
+#testEncodedPredictors  <- testEncodedPredictors  %>% select(-Zscore_encode_tr)
 
 #Sanity Check
 dim(trainEncodedPredictors)
