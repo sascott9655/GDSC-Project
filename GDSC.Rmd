@@ -2,7 +2,7 @@
 title: "Appendix 1. Genomics of Drug Sensitivity in Cancer (GDSC) Project"
 author: "Sam Scott, Megan Lee, Titus Sun"
 date: "2026-06-01"
-output: html_document
+output: github_document
 ---
 
 ```{r warning=FALSE, message=FALSE}
@@ -661,14 +661,13 @@ testEncodedPredictors  <- testEncodedPredictors[, common_cols]
 ```{r}
 #Set up cross validation 
 threefoldCV <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
-fivefoldCV <- trainControl(method = "cv", number = 5, allowParallel = TRUE)
 #repeatedSplits <- trainControl(method = "repeatedcv", number = 5, repeats = 3, allowParallel = TRUE)
 ```
 
 ```{r}
 #Getting rid of Z-score
-#trainEncodedPredictors <- trainEncodedPredictors %>% select(-Zscore_encode_tr)
-#testEncodedPredictors  <- testEncodedPredictors  %>% select(-Zscore_encode_tr)
+trainEncodedPredictors <- trainEncodedPredictors %>% select(-Zscore_encode_tr)
+testEncodedPredictors  <- testEncodedPredictors  %>% select(-Zscore_encode_tr)
 
 #Sanity Check
 dim(trainEncodedPredictors)
@@ -688,7 +687,7 @@ registerDoParallel(cl)
 set.seed(seed)
 lin_reg_baseline <- train(trainEncodedPredictors, trainIC50,
                  method = "lm",
-                 trControl = fivefoldCV)
+                 trControl = threefoldCV)
 lin_reg_baseline
 
 #Stop the parallel cluster when models are finished training
@@ -816,7 +815,6 @@ registerDoSEQ()
 
 ```
 
-
 ```{r}
 target_microtibule_stabiliser <- tibble(target_microtibule_stabiliser = seq(min(trainReducedRows$TARGETMicrotubule.stabiliser),
                                      max(trainReducedRows$TARGETMicrotubule.stabiliser),
@@ -909,12 +907,9 @@ ggplot(sigma_curves,
   labs(color = "Sigma")
 ```
 
-
 ```{r}
 trainReducedRows_num <- data.frame(lapply(trainReducedRows, function(x) as.numeric(as.character(x))))
-dim(trainReducedRows_num)
 testReduced2_num <- data.frame(lapply(testReduced2, function(x) as.numeric(as.character(x))))
-dim(testReduced2_num)
 ```
 
 #MARS
@@ -926,7 +921,7 @@ num_cores <- detectCores() - 1             # Leave 1 core for background tasks
 cl <- makeCluster(num_cores)
 registerDoParallel(cl)
 
-MARSGrid <- expand.grid(degree = 1:2, nprune = 2:20)
+MARSGrid <- expand.grid(degree = 1:2, nprune = 10:35)
 MARS <- train(trainReducedRows_num, trainIC50ReducedRows,
               method ="earth",
               tuneGrid = MARSGrid,
