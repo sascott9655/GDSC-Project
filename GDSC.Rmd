@@ -2,7 +2,7 @@
 title: "Appendix 1. Genomics of Drug Sensitivity in Cancer (GDSC) Project"
 author: "Sam Scott, Megan Lee, Titus Sun"
 date: "2026-06-01"
-output: github_document
+output: html_document
 ---
 
 ```{r warning=FALSE, message=FALSE}
@@ -28,6 +28,7 @@ library(earth)
 library(rcompanion)
 library(gridExtra)
 library(grid)
+library(gt)
 ```
 
 # a way to read the dataset off of github so no need for local machine calls
@@ -37,17 +38,18 @@ data  <- read.csv(data_url)
 ```
 
 ```{r}
-str(data)
+#str(data)
 #head(data)
-dim(data) # 242,035 entries, 19 total columns
-colnames(data)
+#dim(data) # 242,035 entries, 19 total columns
+#colnames(data)
 
 # verifying that each cell line was tested once with each drug
 
-data %>%
-  count(CELL_LINE_NAME, sort = TRUE)
-data %>%
-  count(DRUG_NAME, sort = TRUE)
+#invisible suppresses output
+invisible(data %>%
+  count(CELL_LINE_NAME, sort = TRUE))
+invisible(data %>%
+  count(DRUG_NAME, sort = TRUE))
 ```
 
 ```{r}
@@ -55,34 +57,34 @@ data %>%
 
 # verifying the COSMIC_ID numbers are unique to each CELL_LINE_NAME
 
-data %>%
+invisible(data %>%
   group_by(COSMIC_ID) %>%
   summarise(n_unique = n_distinct(CELL_LINE_NAME)) %>%
-  filter(n_unique > 1)
+  filter(n_unique > 1))
 
 # verifying the DRUG_ID numbers are unique to each DRUG_NAME
 
-data %>%
+invisible(data %>%
   group_by(DRUG_ID) %>%
   summarise(n_unique = n_distinct(DRUG_NAME)) %>%
-  filter(n_unique > 1)
+  filter(n_unique > 1))
 
 # assessing the redundancy of the TCGA columns
 # (To see if TCGA_DESC has values that are the same as Cancer Type.)
 
 tcga_match <- data$TCGA_DESC == data$Cancer.Type..matching.TCGA.label. 
-table(tcga_match, useNA = "ifany")
+#table(tcga_match, useNA = "ifany")
 
-sum(data$Cancer.Type..matching.TCGA.label. == "") # see all Cancer Types that 
+#sum(data$Cancer.Type..matching.TCGA.label. == "") # see all Cancer Types that 
                                                   # are empty strings (51446)
-sum(data$TCGA_DESC == "") # see all TCGA_DESC that are empty strings (1067)
-sum(data$Cancer.Type..matching.TCGA.label. == "" & 
-      data$TCGA_DESC == "") # see all where both columns are empty (707)
+#sum(data$TCGA_DESC == "") # see all TCGA_DESC that are empty strings (1067)
+#sum(data$Cancer.Type..matching.TCGA.label. == "" & 
+     # data$TCGA_DESC == "") # see all where both columns are empty (707)
 
 # removing irrelevant and redundant columns
 data2 <- data %>%
   select(-COSMIC_ID, -DRUG_ID, -Screen.Medium, -Growth.Properties, -CNA, -Gene.Expression, -Methylation)
-str(data2)
+#str(data2)
 ```
 
 ```{r}
@@ -104,10 +106,10 @@ as_tibble(list(
 ```{r}
 # reference Cancer.Type..matching.TCGA.label. to enter values for TCGA_DESC
 
-n_distinct(data2$TCGA_DESC)
-n_distinct(data2$Cancer.Type..matching.TCGA.label.)
-unique(data2$TCGA_DESC)
-unique(data2$Cancer.Type..matching.TCGA.label.) # Cancer Types unique values
+#n_distinct(data2$TCGA_DESC)
+#n_distinct(data2$Cancer.Type..matching.TCGA.label.)
+#unique(data2$TCGA_DESC)
+#unique(data2$Cancer.Type..matching.TCGA.label.) # Cancer Types unique values
 
 # Essentially if empty values occur in both Cancer.Type and TCGA_DESC, label it 
 # as UNCLASSIFIED1. Otherwise use the TCGA_DESC value.
@@ -128,16 +130,16 @@ as_tibble(list(
   column = names(blank),
   empty_count = as.vector(blank)
 ))
-unique(data2$TCGA_DESC)
+#unique(data2$TCGA_DESC)
 ```
 
 ```{r}
 # reference TCGA_DESC to enter GDSC.Tissue.descriptor.1 values for blank values 
 # in GDSC.Tissue.descriptor.2
 
-length(unique(data2$GDSC.Tissue.descriptor.1))
-length(unique(data2$GDSC.Tissue.descriptor.2))
-length(unique(data2$TCGA_DESC))
+#length(unique(data2$GDSC.Tissue.descriptor.1))
+#length(unique(data2$GDSC.Tissue.descriptor.2))
+#length(unique(data2$TCGA_DESC))
 
 # Find non-empty or non-missing GDSC descriptor 1 values
 # Count the number of pairs of occurrences
@@ -182,13 +184,13 @@ as_tibble(list(
   column = names(blank),
   empty_count = as.vector(blank)
 ))
-unique(data2$GDSC.Tissue.descriptor.2)
+#unique(data2$GDSC.Tissue.descriptor.2)
 ```
 
 ```{r}
 # imputing blank MSI values
 
-unique(data2$Microsatellite.instability.Status..MSI.)
+#unique(data2$Microsatellite.instability.Status..MSI.)
 
 tcga_msi <- data2 %>%
   group_by(TCGA_DESC) %>%
@@ -197,9 +199,9 @@ tcga_msi <- data2 %>%
     groups = paste(unique(Microsatellite.instability.Status..MSI.), collapse = ", "),
     .groups = "drop"
   )
-tcga_msi
+#tcga_msi
 
-table(data2$Microsatellite.instability.Status..MSI.)
+#table(data2$Microsatellite.instability.Status..MSI.)
 
 # use chi-square test to check for stronger association of MSI with either
 # TCGA_DESC or TARGET_PATHWAY for later grouping.
@@ -262,12 +264,12 @@ unique(data2$Microsatellite.instability.Status..MSI.)
 ```{r}
 # imputing blank TARGET values
 
-sum(data2$TARGET == "")
-sum(data2$TARGET == "" & data2$TARGET_PATHWAY != "Unclassified")
-sum(data2$TARGET_PATHWAY == "")
+#sum(data2$TARGET == "")
+#sum(data2$TARGET == "" & data2$TARGET_PATHWAY != "Unclassified")
+#sum(data2$TARGET_PATHWAY == "")
 
-length(unique(data2$TARGET))
-length(unique(data2$TARGET_PATHWAY))
+#length(unique(data2$TARGET))
+#length(unique(data2$TARGET_PATHWAY))
 
 target_miss <- data2 %>%
   filter(TARGET != "", TARGET != " ", !is.na(TARGET)) %>%
@@ -281,8 +283,8 @@ target_miss <- data2 %>%
 target_miss <- target_miss %>%
   rename(target_map = TARGET)
 
-names(target_miss)
-names(data2 %>% left_join(target_miss, by = "TARGET_PATHWAY"))
+#names(target_miss)
+#names(data2 %>% left_join(target_miss, by = "TARGET_PATHWAY"))
 
 data2 <- data2 %>%
   left_join(target_miss, by = "TARGET_PATHWAY") %>%
@@ -309,10 +311,10 @@ as_tibble(list(
 
 # making sure our data_c has no empty or missing values in predictors
 
-str(data2)
+#str(data2)
 data_c <- data2 %>%
   select(-GDSC.Tissue.descriptor.1, -Cancer.Type..matching.TCGA.label., -gdsc_map, -msi_map, -target_map)
-str(data_c)
+#str(data_c)
 
 blank_c <- sapply(data_c, function(x) {sum(x == "" | x == " ", na.rm = TRUE)})
 as_tibble(list(
@@ -354,7 +356,7 @@ msi_z <- ggplot(data_c, aes(x = Microsatellite.instability.Status..MSI., y = Z_S
 ```{r}
 # boxplots of TARGET_PATHWAY
 
-unique(data_c$TARGET_PATHWAY)
+#unique(data_c$TARGET_PATHWAY)
 
 tp_ln <- ggplot(data_c, aes(x = TARGET_PATHWAY, y = LN_IC50)) +
   geom_boxplot() +
@@ -384,7 +386,7 @@ tp_z <- ggplot(data_c, aes(x = TARGET_PATHWAY, y = Z_SCORE)) +
 ```{r}
 # boxplots of TCGA_DESC
 
-unique(data_c$TCGA_DESC)
+#unique(data_c$TCGA_DESC)
 
 tcga_ln <- ggplot(data_c, aes(x = TCGA_DESC, y = LN_IC50)) +
   geom_boxplot() +
@@ -413,10 +415,8 @@ tcga_z <- ggplot(data_c, aes(x = TCGA_DESC, y = Z_SCORE)) +
 
 ```{r}
 # correlation matrix of numeric data
-
 data_num <- data_c[, sapply(data_c, is.numeric)] # 3 out of the 10 predictors 
                                                  # are numeric 
-
 data_corr <- cor(data_num)
 corr_mat <- cor(data_num, use = "complete.obs") # make sure that no NAs values 
                                           # are present when doing correlations
@@ -436,9 +436,9 @@ hist.data.frame(data_num)
 ```{r}
 # looking at the histograms, AUC requires a transformation.
 
-skewness(data_c$LN_IC50)
-skewness(data_c$AUC)
-skewness(data_c$Z_SCORE)
+#skewness(data_c$LN_IC50)
+#skewness(data_c$AUC)
+#skewness(data_c$Z_SCORE)
 
 auc_log <- data_c$AUC
 auc_logc <- pmin(pmax(auc_log, 0.001), 0.999) # logit transformation requires
@@ -514,15 +514,14 @@ abline(lm(data_c$LN_IC50 ~ PC1), col = "red")
 ```{r}
 # the final cleaned, reduced, and transformed data set is data_f.
 data_f <- data_c %>% select(-AUC)
-str(data_f)
+#str(data_f)
 ```
 
-#SAM
-
 #Since the models took an extremely long time to train due to the caret package
-#naturally encoding all your categorical variables to be dummy variables, it was computationally expensive.
-#Instead predictors like CELL_LINE_NAME and DRUG_NAME are removed from the model to decrease computation time
-#and they did not provide predictive power
+#naturally encoding all your categorical variables to be dummy variables, it was 
+#computationally expensive. Instead predictors like CELL_LINE_NAME and
+#DRUG_NAME are removed from the model to #decrease computation time and they
+#did not provide predictive power.
 
 #Seed is set. Split the data on cell line
 
@@ -549,12 +548,6 @@ trainPredictors <- predictors[!testingRows,]
 
 trainIC50 <- IC50[!testingRows]
 testIC50  <- IC50[testingRows]
-
-dim(trainPredictors)
-dim(testPredictors)
-
-length(trainIC50)
-length(testIC50)
 ```
 
 #Encode -- One hot encode all the predictor values manually (not through caret model)
@@ -661,18 +654,12 @@ testEncodedPredictors  <- testEncodedPredictors[, common_cols]
 ```{r}
 #Set up cross validation 
 threefoldCV <- trainControl(method = "cv", number = 3, allowParallel = TRUE)
-#repeatedSplits <- trainControl(method = "repeatedcv", number = 5, repeats = 3, allowParallel = TRUE)
 ```
 
 ```{r}
 #Getting rid of Z-score
 trainEncodedPredictors <- trainEncodedPredictors %>% select(-Zscore_encode_tr)
 testEncodedPredictors  <- testEncodedPredictors  %>% select(-Zscore_encode_tr)
-
-#Sanity Check
-dim(trainEncodedPredictors)
-dim(testEncodedPredictors)
-length(trainIC50)
 ```
 
 #Linear Regression use as a baseline
@@ -709,7 +696,7 @@ names(important_feature_values) <- rownames(lin_reg_Imp$importance)
 top25 <- sort(important_feature_values, decreasing = TRUE)[1:25]
 top25
 top25_cols <- names(sort(important_feature_values, decreasing = TRUE))[1:25]
-top25_cols
+#top25_cols
 ```
 
 
@@ -995,4 +982,31 @@ model_results <- cbind(
 )
 model_results
 ```
+```{r}
+results_table <- data.frame(
+  Model = c("Linear Regression (lin_reg)",
+            "KNN Model (knn)",
+            "Support Vector Machine (SVM)",
+            "MARS model (MARS)",
+            "Random Forest (rf)"),
+  RMSE = c(2.0396, 2.1946, 2.0511, 2.0396, 2.0397),
+  R2   = c(0.4481, 0.4345, 0.4450, 0.4481, 0.4480),
+  MAE  = c(1.5993, 1.6798, 1.5966, 1.5993, 1.5997)
+)
 
+table_img <- results_table %>%
+  gt() %>%
+  tab_header(title = "Model Performance Comparison") %>%
+  fmt_number(columns = c(RMSE, R2, MAE), decimals = 4) %>%
+  cols_align(align = "center", columns = c(RMSE, R2, MAE)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = Model)
+  ) %>%
+  cols_label(
+    RMSE = "Test RMSE ↓",
+    R2   = "Test R² ↑",
+    MAE  = "Test MAE ↓"
+  )
+#gtsave(table_img, "model_performance.png") Created an image for report.
+```
